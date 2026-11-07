@@ -28,35 +28,49 @@ class AddContactActivity : Activity() {
     private var rawId = -1L
     private var photoBytes: ByteArray? = null
     private var photoChanged = false
+    private var starred = false
 
     private lateinit var photoView: ImageView
+    private lateinit var starView: ImageView
     private lateinit var nameField: EditText
     private lateinit var phoneField: EditText
 
+    private fun dp(value: Int): Int = Util.dp(this, value)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppTheme.apply(this)
         contactId = intent.getLongExtra("contactId", -1L)
         val editing = contactId >= 0
 
         val scroll = ScrollView(this)
-        scroll.setBackgroundColor(0xFFFFFFFF.toInt())
+        scroll.setBackgroundColor(AppTheme.bg)
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.gravity = Gravity.CENTER_HORIZONTAL
-        root.setPadding(Util.dp(this, 24), Util.dp(this, 32), Util.dp(this, 24), Util.dp(this, 32))
+        root.setPadding(dp(24), dp(24), dp(24), dp(32))
         scroll.addView(root)
 
-        val title = Util.text(this, if (editing) "Edit contact" else "New contact", 22f, 0xFF212121.toInt(), true)
-        root.addView(title)
+        val header = LinearLayout(this)
+        header.orientation = LinearLayout.HORIZONTAL
+        header.gravity = Gravity.CENTER_VERTICAL
+        val title = Util.text(this, if (editing) "Edit contact" else "New contact", 24f, AppTheme.text, true)
+        header.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        starView = Util.icon(this, R.drawable.ic_star, AppTheme.muted)
+        if (editing) {
+            starView.setOnClickListener { toggleStar() }
+            header.addView(starView, LinearLayout.LayoutParams(dp(32), dp(32)))
+        }
+        root.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         photoView = ImageView(this)
-        photoView.setImageBitmap(Util.drawAvatar(null, null, Util.dp(this, 120)))
+        photoView.setImageBitmap(Util.drawAvatar(null, null, dp(120)))
         photoView.setOnClickListener { pickPhoto() }
-        val photoLp = LinearLayout.LayoutParams(Util.dp(this, 120), Util.dp(this, 120))
-        photoLp.topMargin = Util.dp(this, 24)
+        val photoLp = LinearLayout.LayoutParams(dp(120), dp(120))
+        photoLp.topMargin = dp(24)
         root.addView(photoView, photoLp)
 
-        val pickLabel = Util.text(this, "Tap the picture to choose a photo", 13f, Util.GREY)
+        val pickLabel = Util.text(this, "Tap the picture to choose a photo", 13f, AppTheme.muted)
         pickLabel.gravity = Gravity.CENTER
         root.addView(pickLabel)
 
@@ -66,45 +80,65 @@ class AddContactActivity : Activity() {
             InputType.TYPE_TEXT_FLAG_CAP_WORDS or
             InputType.TYPE_TEXT_FLAG_MULTI_LINE
         nameField.setLines(2)
+        Util.styleField(this, nameField)
         val nameLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        nameLp.topMargin = Util.dp(this, 24)
+        nameLp.topMargin = dp(24)
         root.addView(nameField, nameLp)
 
         phoneField = EditText(this)
         phoneField.hint = "Phone number"
         phoneField.inputType = InputType.TYPE_CLASS_PHONE
-        root.addView(
-            phoneField,
-            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        )
+        Util.styleField(this, phoneField)
+        val phoneLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        phoneLp.topMargin = dp(12)
+        root.addView(phoneField, phoneLp)
 
         val save = Util.text(this, "Save", 17f, 0xFFFFFFFF.toInt(), true)
         save.gravity = Gravity.CENTER
-        save.background = Util.roundBg(this, Util.BLUE, 28)
+        save.background = Util.roundBg(this, AppTheme.brand, 28)
         save.setOnClickListener { save() }
-        val saveLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Util.dp(this, 56))
-        saveLp.topMargin = Util.dp(this, 32)
+        val saveLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56))
+        saveLp.topMargin = dp(32)
         root.addView(save, saveLp)
 
-        val cancel = Util.text(this, "Cancel", 16f, Util.GREY, true)
+        val cancel = Util.text(this, "Cancel", 16f, AppTheme.muted, true)
         cancel.gravity = Gravity.CENTER
         cancel.setOnClickListener { finish() }
-        val cancelLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Util.dp(this, 48))
-        cancelLp.topMargin = Util.dp(this, 8)
+        val cancelLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
+        cancelLp.topMargin = dp(8)
         root.addView(cancel, cancelLp)
 
         if (editing) {
-            val delete = Util.text(this, "Delete contact", 16f, Util.RED, true)
+            val delete = Util.text(this, "Delete contact", 16f, AppTheme.red, true)
             delete.gravity = Gravity.CENTER
             delete.setOnClickListener { confirmDelete() }
             root.addView(
                 delete,
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Util.dp(this, 48))
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(48))
             )
             loadExisting()
         }
 
         setContentView(scroll)
+        AppTheme.style(this)
+    }
+
+    // ---------- Favorite star ----------
+
+    private fun updateStar() {
+        starView.setColorFilter(if (starred) AppTheme.amber else AppTheme.muted)
+    }
+
+    private fun toggleStar() {
+        if (Util.setStarred(this, contactId, !starred)) {
+            starred = !starred
+            updateStar()
+            Toast.makeText(
+                this,
+                if (starred) "Added to favorites" else "Removed from favorites",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
     }
 
     // ---------- Loading an existing contact ----------
@@ -116,12 +150,17 @@ class AddContactActivity : Activity() {
             val uri = ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId)
             contentResolver.query(
                 uri,
-                arrayOf(ContactsContract.Contacts.DISPLAY_NAME_PRIMARY, ContactsContract.Contacts.PHOTO_URI),
+                arrayOf(
+                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
+                    ContactsContract.Contacts.PHOTO_URI,
+                    ContactsContract.Contacts.STARRED
+                ),
                 null, null, null
             )?.use { c ->
                 if (c.moveToFirst()) {
                     name = c.getString(0)
                     photoUri = c.getString(1)
+                    starred = c.getInt(2) == 1
                 }
             }
             contentResolver.query(
@@ -142,7 +181,8 @@ class AddContactActivity : Activity() {
             Toast.makeText(this, "Could not load contact: " + e.message, Toast.LENGTH_LONG).show()
         }
         nameField.setText(name ?: "")
-        photoView.setImageBitmap(Util.avatar(this, name, photoUri, Util.dp(this, 120)))
+        photoView.setImageBitmap(Util.avatar(this, name, photoUri, dp(120)))
+        updateStar()
     }
 
     // ---------- Photo ----------
@@ -167,7 +207,7 @@ class AddContactActivity : Activity() {
             bmp.compress(Bitmap.CompressFormat.JPEG, 90, out)
             photoBytes = out.toByteArray()
             photoChanged = true
-            photoView.setImageBitmap(Util.drawAvatar(bmp, null, Util.dp(this, 120)))
+            photoView.setImageBitmap(Util.drawAvatar(bmp, null, dp(120)))
         }
     }
 
@@ -313,7 +353,7 @@ class AddContactActivity : Activity() {
     }
 
     private fun confirmDelete() {
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(this, AppTheme.dialogTheme())
             .setTitle("Delete this contact?")
             .setPositiveButton("Delete") { _, _ ->
                 try {

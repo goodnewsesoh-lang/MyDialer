@@ -23,11 +23,29 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      - name: Unlock the permanent signing key
+        env:
+          SIGNING_PASSPHRASE: ${{ secrets.SIGNING_PASSPHRASE }}
+        run: |
+          if [ -n "$SIGNING_PASSPHRASE" ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass env:SIGNING_PASSPHRASE \
+              -in signing/dialer.jks.enc -out "$RUNNER_TEMP/dialer.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/dialer.jks" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$SIGNING_PASSPHRASE" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$SIGNING_PASSPHRASE" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=mydialer" >> "$GITHUB_ENV"
+            echo "Permanent signing key unlocked."
+          else
+            echo "No SIGNING_PASSPHRASE secret found. Building with a temporary key."
+          fi
+
       - name: Build the APK
-        run: gradle assembleDebug --stacktrace
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: gradle assembleRelease --stacktrace
 
       - name: Save the APK
         uses: actions/upload-artifact@v4
         with:
           name: MyDialer-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs/apk/release/app-release.apk

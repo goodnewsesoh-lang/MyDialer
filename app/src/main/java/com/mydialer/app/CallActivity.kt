@@ -104,8 +104,8 @@ class CallActivity : Activity() {
         ringingRow = LinearLayout(this)
         ringingRow.orientation = LinearLayout.HORIZONTAL
         ringingRow.gravity = Gravity.CENTER
-        val decline = button("Decline", Util.RED) { CallManager.current?.reject(false, null) }
-        val answer = button("Answer", Util.GREEN) { CallManager.current?.answer(VideoProfile.STATE_AUDIO_ONLY) }
+        val decline = button("Decline", AppTheme.red) { CallManager.current?.reject(false, null) }
+        val answer = button("Answer", AppTheme.green) { CallManager.current?.answer(VideoProfile.STATE_AUDIO_ONLY) }
         ringingRow.addView(decline, buttonParams())
         ringingRow.addView(answer, buttonParams())
         root.addView(ringingRow)
@@ -120,7 +120,7 @@ class CallActivity : Activity() {
         activeRow.addView(speakerButton, buttonParams())
         root.addView(activeRow)
 
-        endButton = button("End call", Util.RED) { CallManager.current?.disconnect() }
+        endButton = button("End call", AppTheme.red) { CallManager.current?.disconnect() }
         val endLp = LinearLayout.LayoutParams(Util.dp(this, 200), Util.dp(this, 64))
         endLp.topMargin = Util.dp(this, 16)
         endLp.gravity = Gravity.CENTER_HORIZONTAL
@@ -148,7 +148,7 @@ class CallActivity : Activity() {
         muted = !muted
         DialerCallService.instance?.setMuted(muted)
         muteButton.text = if (muted) "Muted" else "Mute"
-        muteButton.background = Util.roundBg(this, if (muted) Util.BLUE else 0xFF424242.toInt(), 32)
+        muteButton.background = Util.roundBg(this, if (muted) AppTheme.brand else 0xFF424242.toInt(), 32)
     }
 
     private fun toggleSpeaker() {
@@ -157,7 +157,7 @@ class CallActivity : Activity() {
             if (speaker) CallAudioState.ROUTE_SPEAKER else CallAudioState.ROUTE_EARPIECE
         )
         speakerButton.text = if (speaker) "Speaker on" else "Speaker"
-        speakerButton.background = Util.roundBg(this, if (speaker) Util.BLUE else 0xFF424242.toInt(), 32)
+        speakerButton.background = Util.roundBg(this, if (speaker) AppTheme.brand else 0xFF424242.toInt(), 32)
     }
 
     private fun update() {

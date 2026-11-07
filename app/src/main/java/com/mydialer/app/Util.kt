@@ -1,7 +1,12 @@
 package com.mydialer.app
 
 import android.Manifest
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -21,6 +26,7 @@ import android.provider.ContactsContract
 import android.telecom.TelecomManager
 import android.util.LruCache
 import android.view.Gravity
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -28,11 +34,6 @@ import android.widget.Toast
 import kotlin.math.min
 
 object Util {
-
-    const val BLUE = 0xFF1565C0.toInt()
-    const val RED = 0xFFD32F2F.toInt()
-    const val GREEN = 0xFF2E7D32.toInt()
-    const val GREY = 0xFF757575.toInt()
 
     private val cache = LruCache<String, Bitmap>(150)
 
@@ -56,6 +57,22 @@ object Util {
         t.setTextColor(color)
         if (bold) t.setTypeface(t.typeface, Typeface.BOLD)
         return t
+    }
+
+    fun icon(ctx: Context, res: Int, color: Int): ImageView {
+        val v = ImageView(ctx)
+        v.setImageResource(res)
+        v.setColorFilter(color)
+        return v
+    }
+
+    /** Style for text boxes: a soft rounded box. */
+    fun styleField(ctx: Context, field: EditText) {
+        field.background = roundBg(ctx, AppTheme.card, 14)
+        field.setPadding(dp(ctx, 16), dp(ctx, 12), dp(ctx, 16), dp(ctx, 12))
+        field.setTextColor(AppTheme.text)
+        field.setHintTextColor(AppTheme.muted)
+        field.textSize = 16f
     }
 
     // ---------- Caller lookup ----------
@@ -84,6 +101,76 @@ object Util {
             // ignore, treat as unknown caller
         }
         return Caller(null, null, null)
+    }
+
+    // ---------- Contacts helpers ----------
+
+    fun nameColumn(ctx: Context): String =
+        if (Prefs.getBool(ctx, Prefs.LAST_NAME_FIRST, false))
+            ContactsContract.Contacts.DISPLAY_NAME_ALTERNATIVE
+        else ContactsContract.Contacts.DISPLAY_NAME_PRIMARY
+
+    fun sortColumn(ctx: Context): String =
+        if (Prefs.getBool(ctx, Prefs.LAST_NAME_FIRST, false))
+            ContactsContract.Contacts.SORT_KEY_ALTERNATIVE
+        else ContactsContract.Contacts.SORT_KEY_PRIMARY
+
+    fun numbersOf(ctx: Context, contactId: Long): List<String> {
+        val numbers = ArrayList<String>()
+        try {
+            ctx.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                ContactsContract.CommonDataKinds.Phone.CONTACT_ID + "=?",
+                arrayOf(contactId.toString()), null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val n = c.getString(0)
+                    if (!n.isNullOrBlank() && !numbers.contains(n)) numbers.add(n)
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        return numbers
+    }
+
+    fun setStarred(ctx: Context, contactId: Long, starred: Boolean): Boolean {
+        return try {
+            val values = ContentValues()
+            values.put(ContactsContract.Contacts.STARRED, if (starred) 1 else 0)
+            ctx.contentResolver.update(
+                ContentUris.withAppendedId(ContactsContract.Contacts.CONTENT_URI, contactId),
+                values, null, null
+            ) > 0
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** The menu shown when you tap a contact: call, edit, add to favorites. */
+    fun contactMenu(act: Activity, id: Long, name: String, starred: Boolean, changed: () -> Unit) {
+        val numbers = numbersOf(act, id)
+        val options = ArrayList<String>()
+        for (n in numbers) options.add("Call $n")
+        options.add("Edit contact")
+        options.add(if (starred) "Remove from favorites" else "Add to favorites")
+
+        AlertDialog.Builder(act, AppTheme.dialogTheme())
+            .setTitle(name)
+            .setItems(options.toTypedArray()) { _, which ->
+                if (which < numbers.size) {
+                    callOrAsk(act, name, numbers[which])
+                } else if (which == numbers.size) {
+                    val i = Intent(act, AddContactActivity::class.java)
+                    i.putExtra("contactId", id)
+                    act.startActivity(i)
+                } else {
+                    setStarred(act, id, !starred)
+                    changed()
+                }
+            }
+            .show()
     }
 
     // ---------- Pictures ----------
@@ -187,43 +274,97 @@ object Util {
             Toast.makeText(ctx, "Could not place call: " + e.message, Toast.LENGTH_LONG).show()
         }
     }
+
+    /** Calls the number, or asks first if "Ask before calling" is turned on in Settings. */
+    fun callOrAsk(act: Activity, name: String?, number: String) {
+        if (number.isBlank()) return
+        if (Prefs.getBool(act, Prefs.CONFIRM, false)) {
+            AlertDialog.Builder(act, AppTheme.dialogTheme())
+                .setTitle("Call " + (name ?: number) + "?")
+                .setMessage(if (name != null) number else "")
+                .setPositiveButton("Call") { _, _ -> call(act, number) }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else {
+            call(act, number)
+        }
+    }
 }
 
-/** One row used in the contact list and call history list. */
+/** One row in a list: a rounded card with a picture, two lines of text and an optional icon or label on the right. */
 class RowView(ctx: Context) : LinearLayout(ctx) {
+    private val card = LinearLayout(ctx)
     private val avatarView = ImageView(ctx)
     private val titleView = TextView(ctx)
     private val subtitleView = TextView(ctx)
+    private val trailingIcon = ImageView(ctx)
+    private val trailingText = TextView(ctx)
 
     init {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER_VERTICAL
-        setPadding(Util.dp(ctx, 16), Util.dp(ctx, 8), Util.dp(ctx, 16), Util.dp(ctx, 8))
+        setPadding(Util.dp(ctx, 12), Util.dp(ctx, 4), Util.dp(ctx, 12), Util.dp(ctx, 4))
+
+        card.orientation = LinearLayout.HORIZONTAL
+        card.gravity = Gravity.CENTER_VERTICAL
+        card.setPadding(Util.dp(ctx, 12), Util.dp(ctx, 10), Util.dp(ctx, 14), Util.dp(ctx, 10))
+        card.background = Util.roundBg(ctx, AppTheme.card, 16)
+        addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         val size = Util.dp(ctx, 48)
-        addView(avatarView, LinearLayout.LayoutParams(size, size))
+        card.addView(avatarView, LinearLayout.LayoutParams(size, size))
 
         val texts = LinearLayout(ctx)
         texts.orientation = LinearLayout.VERTICAL
         val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        lp.leftMargin = Util.dp(ctx, 16)
-        addView(texts, lp)
+        lp.leftMargin = Util.dp(ctx, 14)
+        card.addView(texts, lp)
 
-        titleView.textSize = 17f
-        titleView.setTextColor(0xFF212121.toInt())
+        titleView.textSize = 16f
+        titleView.setTypeface(titleView.typeface, Typeface.BOLD)
         titleView.maxLines = 2
         texts.addView(titleView)
 
-        subtitleView.textSize = 13f
-        subtitleView.setTextColor(Util.GREY)
+        subtitleView.textSize = 12f
         subtitleView.maxLines = 1
         texts.addView(subtitleView)
+
+        val iconLp = LinearLayout.LayoutParams(Util.dp(ctx, 22), Util.dp(ctx, 22))
+        iconLp.leftMargin = Util.dp(ctx, 8)
+        card.addView(trailingIcon, iconLp)
+
+        trailingText.textSize = 13f
+        trailingText.setTypeface(trailingText.typeface, Typeface.BOLD)
+        val textLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        textLp.leftMargin = Util.dp(ctx, 8)
+        card.addView(trailingText, textLp)
     }
 
-    fun bind(avatar: Bitmap, title: String, subtitle: String, titleColor: Int) {
+    fun bind(
+        avatar: Bitmap,
+        title: String,
+        subtitle: String,
+        titleColor: Int = AppTheme.text,
+        iconRes: Int = 0,
+        iconColor: Int = 0,
+        trailing: String = ""
+    ) {
         avatarView.setImageBitmap(avatar)
         titleView.text = title
         titleView.setTextColor(titleColor)
         subtitleView.text = subtitle
+        subtitleView.setTextColor(AppTheme.muted)
+        if (iconRes != 0) {
+            trailingIcon.setImageResource(iconRes)
+            trailingIcon.setColorFilter(iconColor)
+            trailingIcon.visibility = android.view.View.VISIBLE
+        } else {
+            trailingIcon.visibility = android.view.View.GONE
+        }
+        if (trailing.isNotEmpty()) {
+            trailingText.text = trailing
+            trailingText.setTextColor(AppTheme.accent)
+            trailingText.visibility = android.view.View.VISIBLE
+        } else {
+            trailingText.visibility = android.view.View.GONE
+        }
     }
 }

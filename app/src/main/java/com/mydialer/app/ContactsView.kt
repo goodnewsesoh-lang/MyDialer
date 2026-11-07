@@ -2,8 +2,8 @@ package com.mydialer.app
 
 import android.Manifest
 import android.app.Activity
-import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.drawable.ColorDrawable
 import android.provider.ContactsContract
 import android.text.Editable
 import android.text.InputType
@@ -15,16 +15,15 @@ import android.widget.BaseAdapter
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.TextView
 
 /** All your contacts, with photos, search and an Add button. */
 class ContactsView(private val act: Activity) : LinearLayout(act) {
 
-    class Contact(val id: Long, val name: String, val thumbUri: String?)
+    class Contact(val id: Long, val name: String, val thumbUri: String?, val starred: Boolean)
 
     private val search = EditText(act)
     private val list = ListView(act)
-    private val message = Util.text(act, "", 16f, Util.GREY)
+    private val message = Util.text(act, "", 16f, AppTheme.muted)
     private var all: List<Contact> = emptyList()
     private var shown: List<Contact> = emptyList()
 
@@ -35,22 +34,41 @@ class ContactsView(private val act: Activity) : LinearLayout(act) {
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val row = (convertView as? RowView) ?: RowView(act)
             val c = shown[position]
-            row.bind(Util.avatar(act, c.name, c.thumbUri, Util.dp(act, 48)), c.name, "", 0xFF212121.toInt())
+            row.bind(
+                Util.avatar(act, c.name, c.thumbUri, Util.dp(act, 48)),
+                c.name, "", AppTheme.text,
+                if (c.starred) R.drawable.ic_star else 0, AppTheme.amber, ""
+            )
             return row
         }
     }
 
     init {
         orientation = LinearLayout.VERTICAL
+        setBackgroundColor(AppTheme.bg)
 
         val top = LinearLayout(act)
         top.orientation = LinearLayout.HORIZONTAL
         top.gravity = Gravity.CENTER_VERTICAL
-        top.setPadding(Util.dp(act, 12), Util.dp(act, 8), Util.dp(act, 12), Util.dp(act, 8))
+        top.setPadding(Util.dp(act, 20), Util.dp(act, 16), Util.dp(act, 16), Util.dp(act, 4))
+        val header = Util.text(act, "Contacts", 26f, AppTheme.text, true)
+        top.addView(header, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val add = Util.icon(act, R.drawable.ic_add, 0xFFFFFFFF.toInt())
+        val pad = Util.dp(act, 10)
+        add.setPadding(pad, pad, pad, pad)
+        add.background = Util.roundBg(act, AppTheme.brand, 22)
+        add.setOnClickListener {
+            act.startActivity(Intent(act, AddContactActivity::class.java))
+        }
+        top.addView(add, LinearLayout.LayoutParams(Util.dp(act, 44), Util.dp(act, 44)))
+        addView(top)
 
         search.hint = "Search contacts"
         search.inputType = InputType.TYPE_CLASS_TEXT
         search.isSingleLine = true
+        Util.styleField(act, search)
+        search.background = Util.roundBg(act, AppTheme.card, 24)
         search.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -58,19 +76,9 @@ class ContactsView(private val act: Activity) : LinearLayout(act) {
                 applyFilter()
             }
         })
-        top.addView(search, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-
-        val add = Util.text(act, "+ Add", 15f, 0xFFFFFFFF.toInt(), true)
-        add.gravity = Gravity.CENTER
-        add.setPadding(Util.dp(act, 16), Util.dp(act, 10), Util.dp(act, 16), Util.dp(act, 10))
-        add.background = Util.roundBg(act, Util.BLUE, 20)
-        add.setOnClickListener {
-            act.startActivity(Intent(act, AddContactActivity::class.java))
-        }
-        val addLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        addLp.leftMargin = Util.dp(act, 8)
-        top.addView(add, addLp)
-        addView(top)
+        val searchLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        searchLp.setMargins(Util.dp(act, 16), Util.dp(act, 8), Util.dp(act, 16), Util.dp(act, 8))
+        addView(search, searchLp)
 
         message.gravity = Gravity.CENTER
         message.setPadding(Util.dp(act, 24), Util.dp(act, 24), Util.dp(act, 24), Util.dp(act, 24))
@@ -78,7 +86,15 @@ class ContactsView(private val act: Activity) : LinearLayout(act) {
         addView(message)
 
         list.adapter = adapter
-        list.setOnItemClickListener { _, _, position, _ -> openContact(shown[position]) }
+        list.divider = null
+        list.dividerHeight = 0
+        list.setSelector(ColorDrawable(0))
+        list.clipToPadding = false
+        list.setPadding(0, Util.dp(act, 4), 0, Util.dp(act, 8))
+        list.setOnItemClickListener { _, _, position, _ ->
+            val c = shown[position]
+            Util.contactMenu(act, c.id, c.name, c.starred) { refresh() }
+        }
         addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
@@ -93,16 +109,19 @@ class ContactsView(private val act: Activity) : LinearLayout(act) {
             try {
                 val cols = arrayOf(
                     ContactsContract.Contacts._ID,
-                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY,
-                    ContactsContract.Contacts.PHOTO_THUMBNAIL_URI
+                    Util.nameColumn(act),
+                    ContactsContract.Contacts.PHOTO_THUMBNAIL_URI,
+                    ContactsContract.Contacts.STARRED
                 )
                 act.contentResolver.query(
                     ContactsContract.Contacts.CONTENT_URI, cols,
                     ContactsContract.Contacts.HAS_PHONE_NUMBER + "=1", null,
-                    ContactsContract.Contacts.DISPLAY_NAME_PRIMARY + " COLLATE NOCASE ASC"
+                    Util.sortColumn(act)
                 )?.use { c ->
                     while (c.moveToNext()) {
-                        items.add(Contact(c.getLong(0), c.getString(1) ?: "(No name)", c.getString(2)))
+                        items.add(
+                            Contact(c.getLong(0), c.getString(1) ?: "(No name)", c.getString(2), c.getInt(3) == 1)
+                        )
                     }
                 }
             } catch (e: Exception) {
@@ -126,41 +145,5 @@ class ContactsView(private val act: Activity) : LinearLayout(act) {
         } else {
             message.visibility = View.GONE
         }
-    }
-
-    private fun openContact(contact: Contact) {
-        val numbers = ArrayList<String>()
-        try {
-            act.contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
-                ContactsContract.CommonDataKinds.Phone.CONTACT_ID + "=?",
-                arrayOf(contact.id.toString()), null
-            )?.use { c ->
-                while (c.moveToNext()) {
-                    val n = c.getString(0)
-                    if (!n.isNullOrBlank() && !numbers.contains(n)) numbers.add(n)
-                }
-            }
-        } catch (e: Exception) {
-            // ignore
-        }
-
-        val options = ArrayList<String>()
-        for (n in numbers) options.add("Call $n")
-        options.add("Edit contact")
-
-        AlertDialog.Builder(act)
-            .setTitle(contact.name)
-            .setItems(options.toTypedArray()) { _, which ->
-                if (which < numbers.size) {
-                    Util.call(act, numbers[which])
-                } else {
-                    val i = Intent(act, AddContactActivity::class.java)
-                    i.putExtra("contactId", contact.id)
-                    act.startActivity(i)
-                }
-            }
-            .show()
     }
 }
