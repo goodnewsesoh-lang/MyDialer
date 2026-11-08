@@ -79,6 +79,25 @@ class SettingsView(private val act: MainActivity) : ScrollView(act) {
             Prefs.putInt(act, Prefs.START_TAB, index)
         })
 
+        // ----- Contact photos -----
+        val photos = section("CONTACT PHOTOS")
+        addRow(photos, actionRow("Photo helper", "Go through contacts without a picture, one by one.") {
+            act.startActivity(Intent(act, PhotoHelperActivity::class.java))
+        })
+        addRow(photos, actionRow("Import photos from a folder", "Name each picture after the contact, like Mum.jpg.") {
+            act.startActivity(Intent(act, ImportPhotosActivity::class.java))
+        })
+        addRow(photos, actionRow("Sync contacts", "Open Android sync settings. Contacts saved to your Google account can show photos and are backed up.") {
+            act.startActivity(Intent(Settings.ACTION_SYNC_SETTINGS))
+        })
+
+        // ----- Call recording -----
+        val recording = section("CALL RECORDING")
+        addRow(recording, textsBlock(
+            "Where recordings go",
+            "Recordings are saved in Music > MyDialer. Android blocks apps from recording the other person directly, so turn Speaker on to record both sides. Tell the other person you are recording."
+        ))
+
         // ----- Phone app -----
         val phone = section("PHONE APP")
         addRow(phone, defaultRow())

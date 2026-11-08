@@ -41,7 +41,7 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
 
     private class Agg(var count: Int, var last: Long, var name: String?, var thumb: String?)
 
-    private val filterNames = listOf("All", "Missed", "Received", "Dialed", "Most called")
+    private val filterNames = listOf("All", "Missed", "Received", "Dialed", "Top")
     private val chips = ArrayList<TextView>()
     private val list = ListView(act)
     private val message = Util.text(act, "", 16f, AppTheme.muted)
@@ -74,26 +74,25 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         header.setPadding(Util.dp(act, 20), Util.dp(act, 16), Util.dp(act, 20), Util.dp(act, 4))
         addView(header)
 
-        val scroll = HorizontalScrollView(act)
-        scroll.isHorizontalScrollBarEnabled = false
         val chipRow = LinearLayout(act)
         chipRow.orientation = LinearLayout.HORIZONTAL
-        chipRow.setPadding(Util.dp(act, 16), Util.dp(act, 8), Util.dp(act, 16), Util.dp(act, 8))
+        chipRow.setPadding(Util.dp(act, 12), Util.dp(act, 8), Util.dp(act, 12), Util.dp(act, 8))
         for (i in filterNames.indices) {
-            val chip = Util.text(act, filterNames[i], 14f, AppTheme.text, true)
+            val chip = Util.text(act, filterNames[i], 11f, AppTheme.text, true)
             chip.gravity = Gravity.CENTER
-            chip.setPadding(Util.dp(act, 16), Util.dp(act, 8), Util.dp(act, 16), Util.dp(act, 8))
+            chip.maxLines = 1
+            chip.setPadding(0, Util.dp(act, 9), 0, Util.dp(act, 9))
             chip.setOnClickListener {
                 filter = i
                 applyFilter()
             }
-            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            lp.rightMargin = Util.dp(act, 8)
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.leftMargin = Util.dp(act, 2)
+            lp.rightMargin = Util.dp(act, 2)
             chipRow.addView(chip, lp)
             chips.add(chip)
         }
-        scroll.addView(chipRow)
-        addView(scroll)
+        addView(chipRow)
 
         message.gravity = Gravity.CENTER
         message.setPadding(Util.dp(act, 24), Util.dp(act, 24), Util.dp(act, 24), Util.dp(act, 24))
@@ -110,6 +109,11 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
             val line = shown[position]
             val name = if (line.title == line.number) null else line.title
             Util.callOrAsk(act, name, line.number)
+        }
+        list.setOnItemLongClickListener { _, _, position, _ ->
+            val line = shown[position]
+            Util.numberMenu(act, if (line.title == line.number) null else line.title, line.number)
+            true
         }
         addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -239,7 +243,7 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         for (i in chips.indices) {
             val selected = i == filter
             chips[i].setTextColor(if (selected) 0xFFFFFFFF.toInt() else AppTheme.text)
-            chips[i].background = Util.roundBg(act, if (selected) AppTheme.brand else AppTheme.chip, 20)
+            chips[i].background = Util.roundBg(act, if (selected) AppTheme.brand else AppTheme.chip, 18)
         }
     }
 

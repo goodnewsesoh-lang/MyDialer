@@ -29,6 +29,8 @@ class AddContactActivity : Activity() {
     private var photoBytes: ByteArray? = null
     private var photoChanged = false
     private var starred = false
+    private var accounts: List<String> = emptyList()
+    private var saveTo = 0
 
     private lateinit var photoView: ImageView
     private lateinit var starView: ImageView
@@ -92,6 +94,31 @@ class AddContactActivity : Activity() {
         val phoneLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
         phoneLp.topMargin = dp(12)
         root.addView(phoneField, phoneLp)
+
+        intent.getStringExtra("number")?.let { phoneField.setText(it) }
+
+        if (!editing) {
+            accounts = Util.googleAccounts(this)
+            val options = ArrayList<String>()
+            for (a in accounts) options.add(a)
+            options.add("Phone only")
+            val remembered = Prefs.getString(this, Prefs.SAVE_TO, "")
+            saveTo = when {
+                remembered == "phone" -> options.size - 1
+                accounts.indexOf(remembered) >= 0 -> accounts.indexOf(remembered)
+                accounts.isNotEmpty() -> 0
+                else -> options.size - 1
+            }
+            val saveLabel = Util.text(this, "Save to", 13f, AppTheme.muted, true)
+            val labelLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            labelLp.topMargin = dp(20)
+            labelLp.gravity = Gravity.START
+            root.addView(saveLabel, labelLp)
+            val chips = Util.chipGroup(this, options, saveTo) { saveTo = it }
+            val chipsLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            chipsLp.topMargin = dp(8)
+            root.addView(chips, chipsLp)
+        }
 
         val save = Util.text(this, "Save", 17f, 0xFFFFFFFF.toInt(), true)
         save.gravity = Gravity.CENTER
@@ -232,10 +259,14 @@ class AddContactActivity : Activity() {
 
     private fun insertContact(name: String, phone: String) {
         val ops = ArrayList<ContentProviderOperation>()
+        val useGoogle = saveTo < accounts.size
+        val accountType: String? = if (useGoogle) "com.google" else null
+        val accountName: String? = if (useGoogle) accounts[saveTo] else null
+        Prefs.putString(this, Prefs.SAVE_TO, if (useGoogle) accounts[saveTo] else "phone")
         ops.add(
             ContentProviderOperation.newInsert(ContactsContract.RawContacts.CONTENT_URI)
-                .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, null)
-                .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, null)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_TYPE, accountType)
+                .withValue(ContactsContract.RawContacts.ACCOUNT_NAME, accountName)
                 .build()
         )
         if (name.isNotEmpty()) {

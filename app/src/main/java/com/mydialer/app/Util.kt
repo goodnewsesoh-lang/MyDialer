@@ -21,7 +21,13 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.ExifInterface
 import android.net.Uri
+import android.app.NotificationManager
+import android.content.ContentProviderOperation
 import android.os.Bundle
+import android.provider.CallLog
+import android.telephony.TelephonyManager
+import android.text.TextUtils
+import android.widget.HorizontalScrollView
 import android.provider.ContactsContract
 import android.telecom.TelecomManager
 import android.util.LruCache
@@ -148,29 +154,274 @@ object Util {
         }
     }
 
-    /** The menu shown when you tap a contact: call, edit, add to favorites. */
+    /** The menu shown when you tap a contact: call, message, edit, add to favorites. */
     fun contactMenu(act: Activity, id: Long, name: String, starred: Boolean, changed: () -> Unit) {
         val numbers = numbersOf(act, id)
-        val options = ArrayList<String>()
-        for (n in numbers) options.add("Call $n")
-        options.add("Edit contact")
-        options.add(if (starred) "Remove from favorites" else "Add to favorites")
+        val labels = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        for (n in numbers) {
+            labels.add("Call $n")
+            actions.add { callOrAsk(act, name, n) }
+        }
+        if (numbers.isNotEmpty()) {
+            labels.add("Send SMS")
+            actions.add { openSms(act, numbers[0]) }
+            labels.add("WhatsApp")
+            actions.add { openWhatsApp(act, numbers[0]) }
+        }
+        labels.add("Edit contact")
+        actions.add {
+            val i = Intent(act, AddContactActivity::class.java)
+            i.putExtra("contactId", id)
+            act.startActivity(i)
+        }
+        labels.add(if (starred) "Remove from favorites" else "Add to favorites")
+        actions.add {
+            setStarred(act, id, !starred)
+            changed()
+        }
 
         AlertDialog.Builder(act, AppTheme.dialogTheme())
             .setTitle(name)
-            .setItems(options.toTypedArray()) { _, which ->
-                if (which < numbers.size) {
-                    callOrAsk(act, name, numbers[which])
-                } else if (which == numbers.size) {
-                    val i = Intent(act, AddContactActivity::class.java)
-                    i.putExtra("contactId", id)
-                    act.startActivity(i)
-                } else {
-                    setStarred(act, id, !starred)
-                    changed()
+            .setItems(labels.toTypedArray()) { _, which -> actions[which]() }
+            .show()
+    }
+
+    /** The menu shown when you long-press a call in Recents. */
+    fun numberMenu(act: Activity, name: String?, number: String) {
+        if (number.isBlank()) return
+        val labels = ArrayList<String>()
+        val actions = ArrayList<() -> Unit>()
+        labels.add("Call")
+        actions.add { callOrAsk(act, name, number) }
+        labels.add("Send SMS")
+        actions.add { openSms(act, number) }
+        labels.add("WhatsApp")
+        actions.add { openWhatsApp(act, number) }
+        if (name == null) {
+            labels.add("Save to contacts")
+            actions.add {
+                val i = Intent(act, AddContactActivity::class.java)
+                i.putExtra("number", number)
+                act.startActivity(i)
+            }
+        }
+        AlertDialog.Builder(act, AppTheme.dialogTheme())
+            .setTitle(name ?: number)
+            .setItems(labels.toTypedArray()) { _, which -> actions[which]() }
+            .show()
+    }
+
+    fun openSms(act: Activity, number: String) {
+        try {
+            act.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number))))
+        } catch (e: Exception) {
+            Toast.makeText(act, "No messaging app found", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun whatsAppDigits(ctx: Context, number: String): String {
+        val digits = number.filter { it.isDigit() }
+        if (number.trim().startsWith("+")) return digits
+        if (digits.startsWith("00")) return digits.substring(2)
+        if (digits.startsWith("0")) {
+            var iso = ""
+            try {
+                val tm = ctx.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+                iso = (tm?.simCountryIso ?: "").ifEmpty { tm?.networkCountryIso ?: "" }.uppercase()
+            } catch (e: Exception) {
+                // use the default below
+            }
+            val codes = mapOf(
+                "NG" to "234", "GH" to "233", "KE" to "254", "ZA" to "27", "GB" to "44",
+                "US" to "1", "CA" to "1", "IN" to "91", "CM" to "237", "TG" to "228", "BJ" to "229"
+            )
+            return (codes[iso] ?: "234") + digits.substring(1)
+        }
+        return digits
+    }
+
+    fun openWhatsApp(act: Activity, number: String) {
+        try {
+            val link = "https://wa.me/" + whatsAppDigits(act, number)
+            act.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+        } catch (e: Exception) {
+            Toast.makeText(act, "Could not open WhatsApp", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // ---------- Missed calls ----------
+
+    fun unseenMissedCount(ctx: Context): Int {
+        if (!has(ctx, Manifest.permission.READ_CALL_LOG)) return 0
+        return try {
+            ctx.contentResolver.query(
+                CallLog.Calls.CONTENT_URI, arrayOf(CallLog.Calls._ID),
+                CallLog.Calls.TYPE + "=" + CallLog.Calls.MISSED_TYPE + " AND " + CallLog.Calls.NEW + "=1",
+                null, null
+            )?.use { it.count } ?: 0
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /** Called when you open Recents: the red dot goes away and the missed-call notifications are cleared. */
+    fun markMissedSeen(ctx: Context) {
+        if (has(ctx, Manifest.permission.WRITE_CALL_LOG)) {
+            try {
+                val values = ContentValues()
+                values.put(CallLog.Calls.NEW, 0)
+                values.put(CallLog.Calls.IS_READ, 1)
+                ctx.contentResolver.update(
+                    CallLog.Calls.CONTENT_URI, values,
+                    CallLog.Calls.TYPE + "=" + CallLog.Calls.MISSED_TYPE + " AND " + CallLog.Calls.NEW + "=1",
+                    null
+                )
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        try {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            for (n in nm.activeNotifications) {
+                if (n.id >= 100) nm.cancel(n.id)
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    // ---------- Accounts and photos ----------
+
+    /** Google accounts that store contacts on this phone, so new contacts can be saved (and synced) there. */
+    fun googleAccounts(ctx: Context): List<String> {
+        val names = LinkedHashSet<String>()
+        if (!has(ctx, Manifest.permission.READ_CONTACTS)) return emptyList()
+        try {
+            ctx.contentResolver.query(
+                ContactsContract.Settings.CONTENT_URI,
+                arrayOf(ContactsContract.Settings.ACCOUNT_NAME, ContactsContract.Settings.ACCOUNT_TYPE),
+                null, null, null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val name = c.getString(0)
+                    if (c.getString(1) == "com.google" && !name.isNullOrBlank()) names.add(name)
                 }
             }
-            .show()
+        } catch (e: Exception) {
+            // try the next way
+        }
+        if (names.isEmpty()) {
+            try {
+                ctx.contentResolver.query(
+                    ContactsContract.RawContacts.CONTENT_URI,
+                    arrayOf(ContactsContract.RawContacts.ACCOUNT_NAME),
+                    ContactsContract.RawContacts.ACCOUNT_TYPE + "=?", arrayOf("com.google"), null
+                )?.use { c ->
+                    var rows = 0
+                    while (c.moveToNext() && rows < 3000 && names.size < 5) {
+                        rows++
+                        val name = c.getString(0)
+                        if (!name.isNullOrBlank()) names.add(name)
+                    }
+                }
+            } catch (e: Exception) {
+                // no accounts found
+            }
+        }
+        return names.toList()
+    }
+
+    fun toJpeg(bitmap: Bitmap): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        return out.toByteArray()
+    }
+
+    /** Sets the photo of an existing contact. Tries the contact parts that are allowed to be edited. */
+    fun setContactPhoto(ctx: Context, contactId: Long, bytes: ByteArray): Boolean {
+        val raws = ArrayList<Pair<Long, String?>>()
+        try {
+            ctx.contentResolver.query(
+                ContactsContract.RawContacts.CONTENT_URI,
+                arrayOf(ContactsContract.RawContacts._ID, ContactsContract.RawContacts.ACCOUNT_TYPE),
+                ContactsContract.RawContacts.CONTACT_ID + "=? AND " + ContactsContract.RawContacts.DELETED + "=0",
+                arrayOf(contactId.toString()), null
+            )?.use { c ->
+                while (c.moveToNext()) raws.add(Pair(c.getLong(0), c.getString(1)))
+            }
+        } catch (e: Exception) {
+            return false
+        }
+        val sorted = raws.sortedBy {
+            when (it.second) {
+                null -> 0
+                "com.google" -> 1
+                else -> 2
+            }
+        }
+        val mime = ContactsContract.CommonDataKinds.Photo.CONTENT_ITEM_TYPE
+        for (raw in sorted) {
+            val rawId = raw.first
+            try {
+                val ops = ArrayList<ContentProviderOperation>()
+                ops.add(
+                    ContentProviderOperation.newDelete(ContactsContract.Data.CONTENT_URI)
+                        .withSelection(
+                            ContactsContract.Data.RAW_CONTACT_ID + "=? AND " + ContactsContract.Data.MIMETYPE + "=?",
+                            arrayOf(rawId.toString(), mime)
+                        )
+                        .build()
+                )
+                ops.add(
+                    ContentProviderOperation.newInsert(ContactsContract.Data.CONTENT_URI)
+                        .withValue(ContactsContract.Data.RAW_CONTACT_ID, rawId)
+                        .withValue(ContactsContract.Data.MIMETYPE, mime)
+                        .withValue(ContactsContract.CommonDataKinds.Photo.PHOTO, bytes)
+                        .build()
+                )
+                ctx.contentResolver.applyBatch(ContactsContract.AUTHORITY, ops)
+                return true
+            } catch (e: Exception) {
+                // try the next part of the contact
+            }
+        }
+        return false
+    }
+
+    /** A row of tappable choices. */
+    fun chipGroup(ctx: Context, options: List<String>, selected: Int, onPick: (Int) -> Unit): HorizontalScrollView {
+        val scroll = HorizontalScrollView(ctx)
+        scroll.isHorizontalScrollBarEnabled = false
+        val row = LinearLayout(ctx)
+        row.orientation = LinearLayout.HORIZONTAL
+        val chips = ArrayList<TextView>()
+
+        fun style(sel: Int) {
+            for (i in chips.indices) {
+                val on = i == sel
+                chips[i].setTextColor(if (on) 0xFFFFFFFF.toInt() else AppTheme.text)
+                chips[i].background = roundBg(ctx, if (on) AppTheme.brand else AppTheme.chip, 18)
+            }
+        }
+
+        for (i in options.indices) {
+            val chip = text(ctx, options[i], 14f, AppTheme.text, true)
+            chip.gravity = Gravity.CENTER
+            chip.maxLines = 1
+            chip.setPadding(dp(ctx, 16), dp(ctx, 8), dp(ctx, 16), dp(ctx, 8))
+            chip.setOnClickListener {
+                style(i)
+                onPick(i)
+            }
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.rightMargin = dp(ctx, 8)
+            row.addView(chip, lp)
+            chips.add(chip)
+        }
+        style(selected)
+        scroll.addView(row)
+        return scroll
     }
 
     // ---------- Pictures ----------
@@ -321,10 +572,12 @@ class RowView(ctx: Context) : LinearLayout(ctx) {
         titleView.textSize = 16f
         titleView.setTypeface(titleView.typeface, Typeface.BOLD)
         titleView.maxLines = 2
+        titleView.ellipsize = TextUtils.TruncateAt.END
         texts.addView(titleView)
 
         subtitleView.textSize = 12f
-        subtitleView.maxLines = 1
+        subtitleView.maxLines = 2
+        subtitleView.ellipsize = TextUtils.TruncateAt.END
         texts.addView(subtitleView)
 
         val iconLp = LinearLayout.LayoutParams(Util.dp(ctx, 22), Util.dp(ctx, 22))

@@ -14,6 +14,7 @@ object Prefs {
     const val HAPTIC = "haptic"
     const val CONFIRM = "confirm"
     const val START_TAB = "start_tab"
+    const val SAVE_TO = "save_to"
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
 

@@ -1,6 +1,9 @@
 package com.mydialer.app
 
+import android.Manifest
 import android.app.Activity
+import android.provider.ContactsContract
+import android.view.View
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.text.TextUtils
@@ -15,6 +18,12 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
     private val display = TextView(act)
     private val sb = StringBuilder()
     private var tone: ToneGenerator? = null
+
+    private class Entry(val name: String, val number: String, val digits: String, val t9: String)
+
+    private var entries: List<Entry> = emptyList()
+    private val strip = LinearLayout(act)
+    private var suppressSuggestions = false
 
     private val letters = mapOf(
         "1" to "", "2" to "ABC", "3" to "DEF", "4" to "GHI", "5" to "JKL",
@@ -33,6 +42,12 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
         display.setSingleLine(true)
         display.ellipsize = TextUtils.TruncateAt.START
         addView(display, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Util.dp(act, 64)))
+
+        // Suggestions: contacts that match the digits you typed
+        strip.orientation = LinearLayout.HORIZONTAL
+        strip.gravity = Gravity.CENTER
+        strip.visibility = View.INVISIBLE
+        addView(strip, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Util.dp(act, 40)))
 
         val rows = listOf(
             listOf("1", "2", "3"),
@@ -99,6 +114,7 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
         val backPad = Util.dp(act, 16)
         back.setPadding(backPad, backPad, backPad, backPad)
         back.setOnClickListener {
+            suppressSuggestions = false
             if (sb.isNotEmpty()) sb.deleteCharAt(sb.length - 1)
             show()
         }
@@ -119,9 +135,96 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
     }
 
     private fun press(key: String) {
+        suppressSuggestions = false
         sb.append(key)
         show()
         beep(key)
+    }
+
+    /** Loads your contacts so the keypad can suggest names while you type. */
+    fun refresh() {
+        if (!Util.has(act, Manifest.permission.READ_CONTACTS)) return
+        Thread {
+            val list = ArrayList<Entry>()
+            try {
+                act.contentResolver.query(
+                    ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                    arrayOf(
+                        ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
+                        ContactsContract.CommonDataKinds.Phone.NUMBER
+                    ),
+                    null, null, null
+                )?.use { c ->
+                    while (c.moveToNext()) {
+                        val name = c.getString(0) ?: continue
+                        val number = c.getString(1) ?: continue
+                        list.add(Entry(name, number, number.filter { it.isDigit() }, t9(name)))
+                    }
+                }
+            } catch (e: Exception) {
+                // no suggestions
+            }
+            post {
+                entries = list
+                updateSuggestions()
+            }
+        }.start()
+    }
+
+    /** Turns a name into the digits you would press on a phone keypad, so "Mum" becomes "686". */
+    private fun t9(name: String): String {
+        val out = StringBuilder()
+        for (c in name.lowercase()) {
+            when (c) {
+                'a', 'b', 'c' -> out.append('2')
+                'd', 'e', 'f' -> out.append('3')
+                'g', 'h', 'i' -> out.append('4')
+                'j', 'k', 'l' -> out.append('5')
+                'm', 'n', 'o' -> out.append('6')
+                'p', 'q', 'r', 's' -> out.append('7')
+                't', 'u', 'v' -> out.append('8')
+                'w', 'x', 'y', 'z' -> out.append('9')
+                else -> out.append(' ')
+            }
+        }
+        return out.toString()
+    }
+
+    private fun updateSuggestions() {
+        strip.removeAllViews()
+        val typed = sb.toString().filter { it.isDigit() }
+        if (suppressSuggestions || typed.length < 2) {
+            strip.visibility = View.INVISIBLE
+            return
+        }
+        val matches = ArrayList<Entry>()
+        for (e in entries) {
+            if (e.digits.contains(typed) || e.t9.contains(typed)) {
+                if (matches.none { it.number == e.number }) matches.add(e)
+            }
+            if (matches.size >= 3) break
+        }
+        if (matches.isEmpty()) {
+            strip.visibility = View.INVISIBLE
+            return
+        }
+        for (m in matches) {
+            val chip = Util.text(act, m.name, 13f, AppTheme.text, true)
+            chip.gravity = Gravity.CENTER
+            chip.maxLines = 1
+            chip.ellipsize = TextUtils.TruncateAt.END
+            chip.setPadding(Util.dp(act, 8), Util.dp(act, 6), Util.dp(act, 8), Util.dp(act, 6))
+            chip.background = Util.roundBg(act, AppTheme.chip, 16)
+            chip.setOnClickListener {
+                suppressSuggestions = true
+                setNumber(m.number)
+            }
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            lp.leftMargin = Util.dp(act, 3)
+            lp.rightMargin = Util.dp(act, 3)
+            strip.addView(chip, lp)
+        }
+        strip.visibility = View.VISIBLE
     }
 
     private fun beep(key: String) {
@@ -151,6 +254,7 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
 
     private fun show() {
         display.text = sb.toString()
+        updateSuggestions()
     }
 
     override fun onDetachedFromWindow() {

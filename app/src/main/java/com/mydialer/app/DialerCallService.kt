@@ -5,7 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
+import android.graphics.drawable.Icon
+import android.net.Uri
 import android.telecom.Call
+import android.telecom.DisconnectCause
 import android.telecom.InCallService
 
 /** Android connects to this service when a call comes in or goes out. */
@@ -13,6 +16,7 @@ class DialerCallService : InCallService() {
 
     companion object {
         const val CHANNEL_ID = "incoming_calls"
+        const val MISSED_CHANNEL_ID = "missed_calls"
         const val NOTIFICATION_ID = 1
         var instance: DialerCallService? = null
     }
@@ -47,8 +51,17 @@ class DialerCallService : InCallService() {
 
     override fun onCallRemoved(call: Call) {
         super.onCallRemoved(call)
+        var missed = false
+        var number = ""
+        try {
+            missed = call.details.disconnectCause?.code == DisconnectCause.MISSED
+            number = call.details.handle?.schemeSpecificPart ?: ""
+        } catch (e: Exception) {
+            // ignore
+        }
         CallManager.remove(call)
         getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+        if (missed) showMissedNotification(number)
     }
 
     private fun showIncomingNotification(call: Call, intent: Intent) {
@@ -77,5 +90,47 @@ class DialerCallService : InCallService() {
             .setFullScreenIntent(pending, true)
             .build()
         nm.notify(NOTIFICATION_ID, notification)
+    }
+
+    private fun showMissedNotification(number: String) {
+        val nm = getSystemService(NotificationManager::class.java)
+        val channel = NotificationChannel(MISSED_CHANNEL_ID, "Missed calls", NotificationManager.IMPORTANCE_DEFAULT)
+        nm.createNotificationChannel(channel)
+
+        val caller = Util.lookup(this, number)
+        val who = caller.name ?: if (number.isBlank()) "Unknown caller" else number
+        val id = 100 + (number.hashCode() and 0xFFF)
+
+        val open = Intent(this, MainActivity::class.java)
+        open.putExtra("tab", 0)
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val openPending = PendingIntent.getActivity(
+            this, id, open,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val builder = Notification.Builder(this, MISSED_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.sym_call_missed)
+            .setContentTitle("Missed call")
+            .setContentText(who)
+            .setCategory(Notification.CATEGORY_CALL)
+            .setAutoCancel(true)
+            .setContentIntent(openPending)
+
+        if (number.isNotBlank()) {
+            val call = Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null))
+            call.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val callPending = PendingIntent.getActivity(
+                this, id + 5000, call,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val action = Notification.Action.Builder(
+                Icon.createWithResource(this, android.R.drawable.sym_action_call),
+                "Call back",
+                callPending
+            ).build()
+            builder.addAction(action)
+        }
+        nm.notify(id, builder.build())
     }
 }

@@ -13,7 +13,7 @@ android {
         targetSdk = 34
         // GitHub raises this number on every build so updates install over the old version.
         versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
-        versionName = "2.0"
+        versionName = "2.1"
     }
 
     signingConfigs {
