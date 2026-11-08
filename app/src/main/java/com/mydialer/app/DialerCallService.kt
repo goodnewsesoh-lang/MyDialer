@@ -18,6 +18,8 @@ class DialerCallService : InCallService() {
         const val CHANNEL_ID = "incoming_calls"
         const val MISSED_CHANNEL_ID = "missed_calls"
         const val NOTIFICATION_ID = 1
+        const val ONGOING_ID = 2
+        const val ONGOING_CHANNEL_ID = "ongoing_calls"
         var instance: DialerCallService? = null
     }
 
@@ -42,6 +44,7 @@ class DialerCallService : InCallService() {
         if (call.state == Call.STATE_RINGING) {
             showIncomingNotification(call, intent)
         }
+        showOngoingNotification(intent)
         try {
             startActivity(intent)
         } catch (e: Exception) {
@@ -60,8 +63,30 @@ class DialerCallService : InCallService() {
             // ignore
         }
         CallManager.remove(call)
-        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.cancel(NOTIFICATION_ID)
+        if (CallManager.visible().isEmpty()) nm.cancel(ONGOING_ID)
         if (missed) showMissedNotification(number)
+    }
+
+    /** A quiet notification so you can always get back to the call screen. */
+    private fun showOngoingNotification(intent: Intent) {
+        val nm = getSystemService(NotificationManager::class.java)
+        val channel = NotificationChannel(ONGOING_CHANNEL_ID, "Ongoing calls", NotificationManager.IMPORTANCE_LOW)
+        nm.createNotificationChannel(channel)
+        val pending = PendingIntent.getActivity(
+            this, 2, intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val notification = Notification.Builder(this, ONGOING_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.sym_action_call)
+            .setContentTitle("Call in progress")
+            .setContentText("Tap to return to the call")
+            .setCategory(Notification.CATEGORY_CALL)
+            .setOngoing(true)
+            .setContentIntent(pending)
+            .build()
+        nm.notify(ONGOING_ID, notification)
     }
 
     private fun showIncomingNotification(call: Call, intent: Intent) {

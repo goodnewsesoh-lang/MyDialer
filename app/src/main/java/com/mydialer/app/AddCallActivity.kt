@@ -2,6 +2,7 @@ package com.mydialer.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
 import android.provider.ContactsContract.CommonDataKinds.Phone
@@ -82,6 +83,15 @@ class AddCallActivity : Activity() {
         setContentView(root)
         AppTheme.style(this)
         loadContacts()
+    }
+
+    override fun finish() {
+        super.finish()
+        if (CallManager.visible().isNotEmpty()) {
+            val back = Intent(this, CallActivity::class.java)
+            back.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(back)
+        }
     }
 
     private fun loadContacts() {
