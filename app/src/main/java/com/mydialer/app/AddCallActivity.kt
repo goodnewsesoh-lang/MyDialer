@@ -24,6 +24,7 @@ class AddCallActivity : Activity() {
     private var all: List<Entry> = emptyList()
     private var shown: List<Entry> = emptyList()
     private lateinit var input: EditText
+    private var pickMode = false
 
     private val adapter = object : BaseAdapter() {
         override fun getCount() = shown.size
@@ -43,12 +44,13 @@ class AddCallActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppTheme.apply(this)
+        pickMode = intent.getBooleanExtra("pick", false)
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(AppTheme.bg)
 
-        val title = Util.text(this, "Add call", 26f, AppTheme.text, true)
+        val title = Util.text(this, if (pickMode) "Choose a contact" else "Add call", 26f, AppTheme.text, true)
         title.setPadding(Util.dp(this, 20), Util.dp(this, 20), Util.dp(this, 20), Util.dp(this, 4))
         root.addView(title)
 
@@ -75,8 +77,17 @@ class AddCallActivity : Activity() {
         list.dividerHeight = 0
         list.setSelector(ColorDrawable(0))
         list.setOnItemClickListener { _, _, position, _ ->
-            Util.call(this, shown[position].number)
-            finish()
+            val e = shown[position]
+            if (pickMode) {
+                val data = Intent()
+                data.putExtra("number", e.number)
+                data.putExtra("name", if (e.title.startsWith("Call ")) e.number else e.title)
+                setResult(RESULT_OK, data)
+                finish()
+            } else {
+                Util.startCall(this, e.title, e.number)
+                finish()
+            }
         }
         root.addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
@@ -87,7 +98,7 @@ class AddCallActivity : Activity() {
 
     override fun finish() {
         super.finish()
-        if (CallManager.visible().isNotEmpty()) {
+        if (!pickMode && CallManager.visible().isNotEmpty()) {
             val back = Intent(this, CallActivity::class.java)
             back.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(back)

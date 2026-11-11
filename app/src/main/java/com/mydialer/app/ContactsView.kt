@@ -93,7 +93,9 @@ class ContactsView(private val act: Activity) : LinearLayout(act) {
         list.setPadding(0, Util.dp(act, 4), 0, Util.dp(act, 8))
         list.setOnItemClickListener { _, _, position, _ ->
             val c = shown[position]
-            Util.contactMenu(act, c.id, c.name, c.starred) { refresh() }
+            val i = Intent(act, ContactActivity::class.java)
+            i.putExtra("contactId", c.id)
+            act.startActivity(i)
         }
         addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
     }

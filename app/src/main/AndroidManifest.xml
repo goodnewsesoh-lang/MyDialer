@@ -63,6 +63,12 @@
             android:name=".ImportPhotosActivity"
             android:exported="false" />
 
+        <activity android:name=".ContactActivity" android:exported="false" />
+        <activity android:name=".StatsActivity" android:exported="false" />
+        <activity android:name=".BlockedActivity" android:exported="false" />
+        <activity android:name=".BackupActivity" android:exported="false" />
+        <activity android:name=".SpeedDialActivity" android:exported="false" />
+
         <activity
             android:name=".CallActivity"
             android:exported="false"

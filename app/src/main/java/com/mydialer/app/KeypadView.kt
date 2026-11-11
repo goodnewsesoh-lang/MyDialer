@@ -11,6 +11,7 @@ import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 
 /** The number keypad. The keys stretch to fit any screen, so Call and delete are always visible. */
 class KeypadView(private val act: Activity) : LinearLayout(act) {
@@ -23,6 +24,7 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
 
     private var entries: List<Entry> = emptyList()
     private val strip = LinearLayout(act)
+    private val callSlot = LinearLayout(act)
     private var suppressSuggestions = false
 
     private val letters = mapOf(
@@ -81,6 +83,20 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
                         true
                     }
                 }
+                val digit = k.toIntOrNull()
+                if (digit != null && digit in 2..9) {
+                    key.setOnLongClickListener {
+                        val n = SpeedDial.number(act, digit)
+                        if (n.isBlank()) {
+                            Toast.makeText(
+                                act, "No speed dial for $digit. Set it in Settings.", Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            Util.startCall(act, SpeedDial.name(act, digit).ifEmpty { null }, n)
+                        }
+                        true
+                    }
+                }
                 val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
                 lp.setMargins(Util.dp(act, 5), Util.dp(act, 5), Util.dp(act, 5), Util.dp(act, 5))
                 row.addView(key, lp)
@@ -95,20 +111,10 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
 
         bottom.addView(TextView(act), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
 
-        val call = LinearLayout(act)
-        call.orientation = LinearLayout.HORIZONTAL
-        call.gravity = Gravity.CENTER
-        call.background = Util.roundBg(act, AppTheme.green, 32)
-        val callIcon = Util.icon(act, R.drawable.ic_call, 0xFFFFFFFF.toInt())
-        call.addView(callIcon, LinearLayout.LayoutParams(Util.dp(act, 22), Util.dp(act, 22)))
-        val callText = Util.text(act, "Call", 18f, 0xFFFFFFFF.toInt(), true)
-        val callTextLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-        callTextLp.leftMargin = Util.dp(act, 8)
-        call.addView(callText, callTextLp)
-        call.setOnClickListener { Util.callOrAsk(act, null, sb.toString()) }
-        val callLp = LinearLayout.LayoutParams(0, Util.dp(act, 60), 2f)
-        callLp.setMargins(Util.dp(act, 5), Util.dp(act, 5), Util.dp(act, 5), Util.dp(act, 5))
-        bottom.addView(call, callLp)
+        callSlot.orientation = LinearLayout.HORIZONTAL
+        buildCallButtons(Util.sims(act))
+        val slotLp = LinearLayout.LayoutParams(0, Util.dp(act, 60), 2f)
+        bottom.addView(callSlot, slotLp)
 
         val back = Util.icon(act, R.drawable.ic_backspace, AppTheme.muted)
         val backPad = Util.dp(act, 16)
@@ -128,6 +134,44 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
         addView(bottom, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, Util.dp(act, 70)))
     }
 
+    private fun callButton(label: String, onClick: () -> Unit): LinearLayout {
+        val call = LinearLayout(act)
+        call.orientation = LinearLayout.HORIZONTAL
+        call.gravity = Gravity.CENTER
+        call.background = Util.roundBg(act, AppTheme.green, 32)
+        call.addView(
+            Util.icon(act, R.drawable.ic_call, 0xFFFFFFFF.toInt()),
+            LinearLayout.LayoutParams(Util.dp(act, 20), Util.dp(act, 20))
+        )
+        val text = Util.text(act, label, 16f, 0xFFFFFFFF.toInt(), true)
+        val tlp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+        tlp.leftMargin = Util.dp(act, 6)
+        call.addView(text, tlp)
+        call.setOnClickListener { onClick() }
+        return call
+    }
+
+    /** One green Call button, or one button per SIM when the phone has two SIM cards. */
+    private fun buildCallButtons(sims: List<Util.Sim>) {
+        callSlot.removeAllViews()
+        if (sims.size < 2) {
+            val b = callButton("Call") { Util.callOrAsk(act, null, sb.toString()) }
+            val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+            lp.setMargins(Util.dp(act, 5), Util.dp(act, 5), Util.dp(act, 5), Util.dp(act, 5))
+            callSlot.addView(b, lp)
+        } else {
+            for (sim in sims.take(2)) {
+                val b = callButton(sim.short) {
+                    val n = sb.toString()
+                    if (n.isNotBlank()) Util.call(act, n, sim.handle)
+                }
+                val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+                lp.setMargins(Util.dp(act, 3), Util.dp(act, 5), Util.dp(act, 3), Util.dp(act, 5))
+                callSlot.addView(b, lp)
+            }
+        }
+    }
+
     fun setNumber(number: String) {
         sb.setLength(0)
         sb.append(number)
@@ -143,6 +187,7 @@ class KeypadView(private val act: Activity) : LinearLayout(act) {
 
     /** Loads your contacts so the keypad can suggest names while you type. */
     fun refresh() {
+        buildCallButtons(Util.sims(act))
         if (!Util.has(act, Manifest.permission.READ_CONTACTS)) return
         Thread {
             val list = ArrayList<Entry>()

@@ -2,6 +2,7 @@ package com.mydialer.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.graphics.drawable.ColorDrawable
 import android.provider.CallLog
 import android.view.Gravity
@@ -25,7 +26,10 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         val type: Int,
         val date: Long,
         val duration: Long,
-        val thumbUri: String?
+        val thumbUri: String?,
+        val callId: Long = -1L,
+        val contactId: Long = -1L,
+        val accountId: String? = null
     )
 
     class Line(
@@ -36,7 +40,9 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         val titleColor: Int,
         val iconRes: Int,
         val iconColor: Int,
-        val trailing: String
+        val trailing: String,
+        val callId: Long = -1L,
+        val contactId: Long = -1L
     )
 
     private class Agg(var count: Int, var last: Long, var name: String?, var thumb: String?)
@@ -47,6 +53,7 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
     private val message = Util.text(act, "", 16f, AppTheme.muted)
     private var filter = 0
     private var all: List<Entry> = emptyList()
+    private var sims: List<Util.Sim> = emptyList()
     private var shown: List<Line> = emptyList()
     private val dateFormat = SimpleDateFormat("d MMM, HH:mm", Locale.getDefault())
 
@@ -70,9 +77,19 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(AppTheme.bg)
 
+        val top = LinearLayout(act)
+        top.orientation = LinearLayout.HORIZONTAL
+        top.gravity = Gravity.CENTER_VERTICAL
+        top.setPadding(Util.dp(act, 20), Util.dp(act, 16), Util.dp(act, 16), Util.dp(act, 4))
         val header = Util.text(act, "Recents", 26f, AppTheme.text, true)
-        header.setPadding(Util.dp(act, 20), Util.dp(act, 16), Util.dp(act, 20), Util.dp(act, 4))
-        addView(header)
+        top.addView(header, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val stats = Util.icon(act, R.drawable.ic_chart, AppTheme.accent)
+        val sp = Util.dp(act, 10)
+        stats.setPadding(sp, sp, sp, sp)
+        stats.background = Util.roundBg(act, AppTheme.chip, 22)
+        stats.setOnClickListener { act.startActivity(Intent(act, StatsActivity::class.java)) }
+        top.addView(stats, LinearLayout.LayoutParams(Util.dp(act, 44), Util.dp(act, 44)))
+        addView(top)
 
         val chipRow = LinearLayout(act)
         chipRow.orientation = LinearLayout.HORIZONTAL
@@ -108,11 +125,14 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         list.setOnItemClickListener { _, _, position, _ ->
             val line = shown[position]
             val name = if (line.title == line.number) null else line.title
-            Util.callOrAsk(act, name, line.number)
+            Util.callOrAsk(act, name, line.number, line.contactId)
         }
         list.setOnItemLongClickListener { _, _, position, _ ->
             val line = shown[position]
-            Util.numberMenu(act, if (line.title == line.number) null else line.title, line.number)
+            Util.numberMenu(
+                act, if (line.title == line.number) null else line.title, line.number,
+                line.callId, line.contactId
+            ) { refresh() }
             true
         }
         addView(list, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -129,13 +149,16 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         Thread {
             val items = ArrayList<Entry>()
             val lookups = HashMap<String, Util.Caller>()
+            val simList = Util.sims(act)
             try {
                 val cols = arrayOf(
                     CallLog.Calls.NUMBER,
                     CallLog.Calls.CACHED_NAME,
                     CallLog.Calls.TYPE,
                     CallLog.Calls.DATE,
-                    CallLog.Calls.DURATION
+                    CallLog.Calls.DURATION,
+                    CallLog.Calls._ID,
+                    CallLog.Calls.PHONE_ACCOUNT_ID
                 )
                 act.contentResolver.query(
                     CallLog.Calls.CONTENT_URI, cols, null, null, CallLog.Calls.DATE + " DESC"
@@ -146,13 +169,14 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
                         val caller = if (number.isBlank()) Util.Caller(null, null, null)
                         else lookups.getOrPut(number) { Util.lookup(act, number) }
                         val name = caller.name ?: cached
-                        items.add(Entry(number, name, c.getInt(2), c.getLong(3), c.getLong(4), caller.thumbUri))
+                        items.add(Entry(number, name, c.getInt(2), c.getLong(3), c.getLong(4), caller.thumbUri, c.getLong(5), caller.id, c.getString(6)))
                     }
                 }
             } catch (e: Exception) {
                 // show an empty list
             }
             post {
+                sims = simList
                 all = items
                 message.visibility = View.GONE
                 applyFilter()
@@ -223,6 +247,9 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
             CallLog.Calls.REJECTED_TYPE -> {
                 kind = "Declined"; iconRes = R.drawable.ic_call_missed; iconColor = AppTheme.amber
             }
+            6 -> {
+                kind = "Blocked"; iconRes = R.drawable.ic_block; iconColor = AppTheme.red
+            }
             CallLog.Calls.VOICEMAIL_TYPE -> {
                 kind = "Voicemail"; iconRes = 0; iconColor = 0
             }
@@ -235,8 +262,13 @@ class RecentsView(private val act: Activity) : LinearLayout(act) {
         if (e.name != null && e.number.isNotBlank()) parts.add(e.number)
         parts.add(dateFormat.format(Date(e.date)))
         if (e.duration > 0) parts.add(formatDuration(e.duration))
+        val simLabel = Util.simName(sims, e.accountId)
+        if (simLabel != null) parts.add(simLabel)
         val titleColor = if (e.type == CallLog.Calls.MISSED_TYPE) AppTheme.red else AppTheme.text
-        return Line(e.number, title, parts.joinToString(" · "), e.thumbUri, titleColor, iconRes, iconColor, "")
+        var sub = parts.joinToString(" · ")
+        val note = if (e.callId >= 0) Notes.get(act, e.callId) else ""
+        if (note.isNotEmpty()) sub += "\n\u270E " + note
+        return Line(e.number, title, sub, e.thumbUri, titleColor, iconRes, iconColor, "", e.callId, e.contactId)
     }
 
     private fun styleChips() {

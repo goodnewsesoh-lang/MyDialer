@@ -43,13 +43,21 @@ class SettingsView(private val act: MainActivity) : ScrollView(act) {
 
         // ----- Appearance -----
         val appearance = section("APPEARANCE")
-        val themeValues = listOf("light", "dark", "system")
+        val themeValues = listOf("light", "dark", "black", "system")
         val currentTheme = themeValues.indexOf(Prefs.getString(act, Prefs.THEME, "light")).coerceAtLeast(0)
         addRow(appearance, choiceRow(
-            "Theme", "Light is the default. Dark is easier on the eyes at night.",
-            listOf("Light", "Dark", "Follow phone"), currentTheme
+            "Theme", "Black is pure black and saves battery on AMOLED screens.",
+            listOf("Light", "Dark", "Black", "Follow phone"), currentTheme
         ) { index ->
             Prefs.putString(act, Prefs.THEME, themeValues[index])
+            act.recreate()
+        })
+
+        addRow(appearance, choiceRow(
+            "Accent colour", "The colour of buttons and highlights.",
+            AppTheme.accentNames, Prefs.getInt(act, Prefs.ACCENT, 0).coerceIn(0, AppTheme.accentNames.size - 1)
+        ) { index ->
+            Prefs.putInt(act, Prefs.ACCENT, index)
             act.recreate()
         })
 
@@ -67,7 +75,40 @@ class SettingsView(private val act: MainActivity) : ScrollView(act) {
         val calls = section("CALLS AND KEYPAD")
         addRow(calls, switchRow("Keypad tones", "Play a sound when you tap a key.", Prefs.TONES, true))
         addRow(calls, switchRow("Vibrate on keypad tap", "A small buzz when you tap a key.", Prefs.HAPTIC, true))
+        addRow(calls, switchRow("Slide to answer", "Slide the green button to answer, so you cannot answer by accident.", Prefs.SLIDE, true))
+        val sims = Util.sims(act)
+        if (sims.size >= 2) {
+            val labels = ArrayList<String>()
+            val values = ArrayList<String>()
+            labels.add("Ask every time"); values.add("ask")
+            labels.add("Phone default"); values.add("default")
+            for (sim in sims) {
+                labels.add(sim.label); values.add("sim:" + sim.handle.id)
+            }
+            val cur = values.indexOf(Prefs.getString(act, Prefs.SIM_MODE, "ask")).coerceAtLeast(0)
+            addRow(calls, choiceRow(
+                "SIM for calls", "A contact can have its own SIM on its contact page.",
+                labels, cur
+            ) { index ->
+                Prefs.putString(act, Prefs.SIM_MODE, values[index])
+            })
+        }
         addRow(calls, switchRow("Ask before calling", "Shows a question before calling from Recents, Favorites and Contacts.", Prefs.CONFIRM, false))
+
+        // ----- Tools -----
+        val tools = section("CALL TOOLS")
+        addRow(tools, actionRow("Call stats", "See how much you talk each week, with a chart.") {
+            act.startActivity(Intent(act, StatsActivity::class.java))
+        })
+        addRow(tools, actionRow("Blocked numbers", "See and unblock numbers you blocked.") {
+            act.startActivity(Intent(act, BlockedActivity::class.java))
+        })
+        addRow(tools, actionRow("Speed dial", "Hold a number key (2 to 9) on the keypad to call a favorite.") {
+            act.startActivity(Intent(act, SpeedDialActivity::class.java))
+        })
+        addRow(tools, actionRow("Backup and restore", "Save your contacts and photos to a file, or bring them back.") {
+            act.startActivity(Intent(act, BackupActivity::class.java))
+        })
 
         // ----- Start screen -----
         val start = section("START SCREEN")

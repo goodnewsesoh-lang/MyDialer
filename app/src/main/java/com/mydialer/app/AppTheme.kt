@@ -15,6 +15,9 @@ object Prefs {
     const val CONFIRM = "confirm"
     const val START_TAB = "start_tab"
     const val SAVE_TO = "save_to"
+    const val ACCENT = "accent"
+    const val SLIDE = "slide_answer"
+    const val SIM_MODE = "sim_mode"
 
     private fun sp(ctx: Context) = ctx.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -37,12 +40,28 @@ object Prefs {
 /** Light and dark colours. Light is the default. */
 object AppTheme {
     // Colours that stay the same in both modes
-    const val brand = 0xFF4F46E5.toInt()
     const val red = 0xFFE5484D.toInt()
     const val green = 0xFF22A06B.toInt()
     const val amber = 0xFFF5A623.toInt()
 
+    var brand = 0xFF4F46E5.toInt()
+    var black = false
     var dark = false
+
+    val accentNames = listOf("Indigo", "Green", "Orange", "Pink", "Teal")
+    val accentColors = intArrayOf(
+        0xFF4F46E5.toInt(), 0xFF16A34A.toInt(), 0xFFEA580C.toInt(), 0xFFDB2777.toInt(), 0xFF0D9488.toInt()
+    )
+
+    private fun lighten(color: Int): Int {
+        val r = (color shr 16) and 0xFF
+        val g = (color shr 8) and 0xFF
+        val b = color and 0xFF
+        val nr = r + (255 - r) * 45 / 100
+        val ng = g + (255 - g) * 45 / 100
+        val nb = b + (255 - b) * 45 / 100
+        return (0xFF shl 24) or (nr shl 16) or (ng shl 8) or nb
+    }
     var bg = 0xFFF5F6FA.toInt()
     var card = 0xFFFFFFFF.toInt()
     var text = 0xFF1B1B2F.toInt()
@@ -54,8 +73,11 @@ object AppTheme {
     /** Reads the saved choice (light, dark or system) and sets the colours. */
     fun apply(ctx: Context) {
         val mode = Prefs.getString(ctx, Prefs.THEME, "light")
+        val idx = Prefs.getInt(ctx, Prefs.ACCENT, 0).coerceIn(0, accentColors.size - 1)
+        brand = accentColors[idx]
+        black = mode == "black"
         dark = when (mode) {
-            "dark" -> true
+            "dark", "black" -> true
             "system" ->
                 (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                     Configuration.UI_MODE_NIGHT_YES
@@ -68,7 +90,13 @@ object AppTheme {
             muted = 0xFF9CA3B5.toInt()
             divider = 0xFF2A2D3A.toInt()
             chip = 0xFF262938.toInt()
-            accent = 0xFF8F8AFF.toInt()
+            accent = lighten(brand)
+            if (black) {
+                bg = 0xFF000000.toInt()
+                card = 0xFF111111.toInt()
+                divider = 0xFF262626.toInt()
+                chip = 0xFF1E1E1E.toInt()
+            }
         } else {
             bg = 0xFFF5F6FA.toInt()
             card = 0xFFFFFFFF.toInt()
@@ -76,7 +104,7 @@ object AppTheme {
             muted = 0xFF6B7280.toInt()
             divider = 0xFFE5E7EB.toInt()
             chip = 0xFFE8E9F5.toInt()
-            accent = 0xFF4F46E5.toInt()
+            accent = brand
         }
     }
 

@@ -71,7 +71,7 @@ class FavoritesView(private val act: Activity) : LinearLayout(act) {
         grid.setOnItemClickListener { _, _, position, _ ->
             val fav = favs[position]
             val numbers = Util.numbersOf(act, fav.id)
-            if (numbers.isNotEmpty()) Util.callOrAsk(act, fav.name, numbers[0])
+            if (numbers.isNotEmpty()) Util.callOrAsk(act, fav.name, numbers[0], fav.id)
         }
         grid.setOnItemLongClickListener { _, _, position, _ ->
             val fav = favs[position]

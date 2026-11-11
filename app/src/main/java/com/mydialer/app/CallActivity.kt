@@ -38,6 +38,8 @@ class CallActivity : Activity() {
     private lateinit var incomingPanel: LinearLayout
     private lateinit var incomingText: TextView
     private lateinit var ringingRow: LinearLayout
+    private lateinit var slideBox: LinearLayout
+    private val simList by lazy { Util.sims(this) }
     private lateinit var gridPanel: LinearLayout
     private lateinit var padPanel: LinearLayout
     private lateinit var padDisplay: TextView
@@ -72,6 +74,7 @@ class CallActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppTheme.apply(this)
         window.addFlags(
             WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
                 WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
@@ -253,6 +256,21 @@ class CallActivity : Activity() {
         ringingRow.addView(decline, rrLp)
         ringingRow.addView(answer, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(ringingRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+
+        // Slide to answer (used when it is turned on in Settings)
+        slideBox = LinearLayout(this)
+        slideBox.orientation = LinearLayout.VERTICAL
+        slideBox.gravity = Gravity.CENTER_HORIZONTAL
+        val slider = SlideToAnswerView(this) {
+            CallManager.primary()?.answer(VideoProfile.STATE_AUDIO_ONLY)
+        }
+        val sliderLp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(72))
+        sliderLp.setMargins(dp(24), 0, dp(24), dp(20))
+        slideBox.addView(slider, sliderLp)
+        slideBox.addView(bigButton(R.drawable.ic_call_end, AppTheme.red, "Decline") {
+            CallManager.primary()?.reject(false, null)
+        })
+        root.addView(slideBox, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         // The grid of call buttons
         muteBtn = actionButton(R.drawable.ic_mic, "Mute") { toggleMute() }
@@ -487,6 +505,8 @@ class CallActivity : Activity() {
             Call.STATE_DISCONNECTED -> "Call ended"
             else -> ""
         }
+        val simLabel = Util.simName(simList, primary.details.accountHandle?.id)
+        if (simLabel != null) stateText += "  ·  $simLabel"
         if (recorder.isRecording) stateText += "  ● REC"
         stateView.text = stateText
 
@@ -507,7 +527,9 @@ class CallActivity : Activity() {
         }
 
         // Which buttons to show
-        ringingRow.visibility = if (ringingAlone) View.VISIBLE else View.GONE
+        val slide = Prefs.getBool(this, Prefs.SLIDE, true)
+        ringingRow.visibility = if (ringingAlone && !slide) View.VISIBLE else View.GONE
+        slideBox.visibility = if (ringingAlone && slide) View.VISIBLE else View.GONE
         endBox.visibility = if (ringingAlone) View.GONE else View.VISIBLE
         gridPanel.visibility = if (!ringingAlone && !padOpen) View.VISIBLE else View.GONE
         padPanel.visibility = if (!ringingAlone && padOpen) View.VISIBLE else View.GONE

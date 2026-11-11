@@ -29,7 +29,10 @@ import android.telephony.TelephonyManager
 import android.text.TextUtils
 import android.widget.HorizontalScrollView
 import android.provider.ContactsContract
+import android.telecom.PhoneAccount
+import android.telecom.PhoneAccountHandle
 import android.telecom.TelecomManager
+import android.provider.BlockedNumberContract
 import android.util.LruCache
 import android.view.Gravity
 import android.widget.EditText
@@ -83,7 +86,7 @@ object Util {
 
     // ---------- Caller lookup ----------
 
-    class Caller(val name: String?, val photoUri: String?, val thumbUri: String?)
+    class Caller(val name: String?, val photoUri: String?, val thumbUri: String?, val id: Long = -1L)
 
     fun lookup(ctx: Context, number: String): Caller {
         if (number.isBlank() || !has(ctx, Manifest.permission.READ_CONTACTS)) {
@@ -96,11 +99,12 @@ object Util {
             val cols = arrayOf(
                 ContactsContract.PhoneLookup.DISPLAY_NAME,
                 ContactsContract.PhoneLookup.PHOTO_URI,
-                ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI
+                ContactsContract.PhoneLookup.PHOTO_THUMBNAIL_URI,
+                ContactsContract.PhoneLookup._ID
             )
             ctx.contentResolver.query(uri, cols, null, null, null)?.use { c ->
                 if (c.moveToFirst()) {
-                    return Caller(c.getString(0), c.getString(1), c.getString(2))
+                    return Caller(c.getString(0), c.getString(1), c.getString(2), c.getLong(3))
                 }
             }
         } catch (e: Exception) {
@@ -161,7 +165,13 @@ object Util {
         val actions = ArrayList<() -> Unit>()
         for (n in numbers) {
             labels.add("Call $n")
-            actions.add { callOrAsk(act, name, n) }
+            actions.add { callOrAsk(act, name, n, id) }
+        }
+        labels.add("Open contact page")
+        actions.add {
+            val i = Intent(act, ContactActivity::class.java)
+            i.putExtra("contactId", id)
+            act.startActivity(i)
         }
         if (numbers.isNotEmpty()) {
             labels.add("Send SMS")
@@ -188,16 +198,54 @@ object Util {
     }
 
     /** The menu shown when you long-press a call in Recents. */
-    fun numberMenu(act: Activity, name: String?, number: String) {
+    fun numberMenu(
+        act: Activity, name: String?, number: String,
+        callId: Long = -1L, contactId: Long = -1L, changed: () -> Unit = {}
+    ) {
         if (number.isBlank()) return
+        val cid = if (contactId >= 0) contactId else lookup(act, number).id
         val labels = ArrayList<String>()
         val actions = ArrayList<() -> Unit>()
         labels.add("Call")
-        actions.add { callOrAsk(act, name, number) }
+        actions.add { callOrAsk(act, name, number, cid) }
         labels.add("Send SMS")
         actions.add { openSms(act, number) }
         labels.add("WhatsApp")
         actions.add { openWhatsApp(act, number) }
+        if (cid >= 0) {
+            labels.add("Open contact page")
+            actions.add {
+                val i = Intent(act, ContactActivity::class.java)
+                i.putExtra("contactId", cid)
+                act.startActivity(i)
+            }
+        }
+        if (callId >= 0) {
+            val has = Notes.get(act, callId).isNotEmpty()
+            labels.add(if (has) "Edit note" else "Add note")
+            actions.add { Notes.edit(act, callId, name ?: number, changed) }
+        }
+        if (canBlock(act)) {
+            if (isBlocked(act, number)) {
+                labels.add("Unblock this number")
+                actions.add { unblock(act, number); changed() }
+            } else {
+                labels.add("Block this number")
+                actions.add {
+                    AlertDialog.Builder(act, AppTheme.dialogTheme())
+                        .setTitle("Block " + (name ?: number) + "?")
+                        .setMessage("Calls from this number will be stopped.")
+                        .setPositiveButton("Block") { _, _ ->
+                            if (!block(act, number)) {
+                                Toast.makeText(act, "Could not block this number", Toast.LENGTH_SHORT).show()
+                            }
+                            changed()
+                        }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                }
+            }
+        }
         if (name == null) {
             labels.add("Save to contacts")
             actions.add {
@@ -210,6 +258,55 @@ object Util {
             .setTitle(name ?: number)
             .setItems(labels.toTypedArray()) { _, which -> actions[which]() }
             .show()
+    }
+
+    // ---------- Blocked numbers ----------
+
+    fun canBlock(ctx: Context): Boolean = try {
+        BlockedNumberContract.canCurrentUserBlockNumbers(ctx)
+    } catch (e: Exception) {
+        false
+    }
+
+    fun isBlocked(ctx: Context, number: String): Boolean = try {
+        BlockedNumberContract.isBlocked(ctx, number)
+    } catch (e: Exception) {
+        false
+    }
+
+    fun block(ctx: Context, number: String): Boolean = try {
+        val values = ContentValues()
+        values.put(BlockedNumberContract.BlockedNumbers.COLUMN_ORIGINAL_NUMBER, number)
+        ctx.contentResolver.insert(BlockedNumberContract.BlockedNumbers.CONTENT_URI, values) != null
+    } catch (e: Exception) {
+        false
+    }
+
+    fun unblock(ctx: Context, number: String) {
+        try {
+            BlockedNumberContract.unblock(ctx, number)
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+
+    fun blockedNumbers(ctx: Context): List<String> {
+        val out = ArrayList<String>()
+        try {
+            ctx.contentResolver.query(
+                BlockedNumberContract.BlockedNumbers.CONTENT_URI,
+                arrayOf(BlockedNumberContract.BlockedNumbers.COLUMN_ORIGINAL_NUMBER),
+                null, null, null
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val n = c.getString(0)
+                    if (!n.isNullOrBlank()) out.add(n)
+                }
+            }
+        } catch (e: Exception) {
+            // empty list
+        }
+        return out
     }
 
     fun openSms(act: Activity, number: String) {
@@ -510,9 +607,38 @@ object Util {
         return bmp
     }
 
-    // ---------- Calling ----------
+    // ---------- Calling and SIM cards ----------
 
-    fun call(ctx: Context, number: String) {
+    class Sim(val handle: PhoneAccountHandle, val label: String, val short: String)
+
+    /** The SIM cards that can make calls. Empty if the phone cannot tell us. */
+    fun sims(ctx: Context): List<Sim> {
+        val out = ArrayList<Sim>()
+        try {
+            val tm = ctx.getSystemService(TelecomManager::class.java)
+            var n = 0
+            for (h in tm.callCapablePhoneAccounts) {
+                val acc = tm.getPhoneAccount(h) ?: continue
+                if ((acc.capabilities and PhoneAccount.CAPABILITY_SIM_SUBSCRIPTION) == 0) continue
+                n++
+                val carrier = acc.label?.toString() ?: ""
+                val label = if (carrier.isNotBlank()) "SIM $n · $carrier" else "SIM $n"
+                out.add(Sim(h, label, "SIM $n"))
+            }
+        } catch (e: Exception) {
+            // no SIM list
+        }
+        return out
+    }
+
+    /** "SIM 1" or "SIM 2" for a call log entry, or null when the phone has only one SIM. */
+    fun simName(sims: List<Sim>, accountId: String?): String? {
+        if (sims.size < 2 || accountId.isNullOrEmpty()) return null
+        for (s in sims) if (s.handle.id == accountId) return s.short
+        return null
+    }
+
+    fun call(ctx: Context, number: String, handle: PhoneAccountHandle? = null) {
         if (number.isBlank()) return
         if (!has(ctx, Manifest.permission.CALL_PHONE)) {
             Toast.makeText(ctx, "Please allow the Phone permission first", Toast.LENGTH_LONG).show()
@@ -520,25 +646,116 @@ object Util {
         }
         try {
             val tm = ctx.getSystemService(TelecomManager::class.java)
-            tm.placeCall(Uri.fromParts("tel", number, null), Bundle())
+            val extras = Bundle()
+            if (handle != null) extras.putParcelable(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
+            tm.placeCall(Uri.fromParts("tel", number, null), extras)
         } catch (e: Exception) {
             Toast.makeText(ctx, "Could not place call: " + e.message, Toast.LENGTH_LONG).show()
         }
     }
 
+    private fun simFromPref(sims: List<Sim>, pref: String): Sim? {
+        if (!pref.startsWith("sim:")) return null
+        val id = pref.substring(4)
+        for (s in sims) if (s.handle.id == id) return s
+        return null
+    }
+
+    /** Calls with the right SIM: the contact's own SIM, then the SIM chosen in Settings, otherwise asks. */
+    fun startCall(act: Activity, name: String?, number: String, contactId: Long = -1L) {
+        if (number.isBlank()) return
+        val sims = sims(act)
+        if (sims.size < 2) {
+            call(act, number)
+            return
+        }
+        val cid = if (contactId >= 0) contactId else lookup(act, number).id
+        if (cid >= 0) {
+            val chosen = simFromPref(sims, Prefs.getString(act, "sim_c_$cid", ""))
+            if (chosen != null) {
+                call(act, number, chosen.handle)
+                return
+            }
+        }
+        val mode = Prefs.getString(act, Prefs.SIM_MODE, "ask")
+        if (mode == "default") {
+            call(act, number)
+            return
+        }
+        val fixed = simFromPref(sims, mode)
+        if (fixed != null) {
+            call(act, number, fixed.handle)
+            return
+        }
+        val labels = sims.map { it.label }.toTypedArray()
+        AlertDialog.Builder(act, AppTheme.dialogTheme())
+            .setTitle("Call " + (name ?: number) + " with")
+            .setItems(labels) { _, which -> call(act, number, sims[which].handle) }
+            .show()
+    }
+
     /** Calls the number, or asks first if "Ask before calling" is turned on in Settings. */
-    fun callOrAsk(act: Activity, name: String?, number: String) {
+    fun callOrAsk(act: Activity, name: String?, number: String, contactId: Long = -1L) {
         if (number.isBlank()) return
         if (Prefs.getBool(act, Prefs.CONFIRM, false)) {
             AlertDialog.Builder(act, AppTheme.dialogTheme())
                 .setTitle("Call " + (name ?: number) + "?")
                 .setMessage(if (name != null) number else "")
-                .setPositiveButton("Call") { _, _ -> call(act, number) }
+                .setPositiveButton("Call") { _, _ -> startCall(act, name, number, contactId) }
                 .setNegativeButton("Cancel", null)
                 .show()
         } else {
-            call(act, number)
+            startCall(act, name, number, contactId)
         }
+    }
+}
+
+/** Short notes attached to calls, kept on this phone. */
+object Notes {
+    private fun sp(ctx: Context) = ctx.getSharedPreferences("notes", Context.MODE_PRIVATE)
+
+    fun get(ctx: Context, callId: Long): String = sp(ctx).getString("c$callId", "") ?: ""
+
+    fun put(ctx: Context, callId: Long, note: String) {
+        val e = sp(ctx).edit()
+        if (note.isBlank()) e.remove("c$callId") else e.putString("c$callId", note.trim())
+        e.apply()
+    }
+
+    fun edit(act: Activity, callId: Long, who: String, done: () -> Unit) {
+        val field = EditText(act)
+        field.hint = "Write a short note"
+        field.setText(get(act, callId))
+        Util.styleField(act, field)
+        val box = LinearLayout(act)
+        val pad = Util.dp(act, 20)
+        box.setPadding(pad, Util.dp(act, 8), pad, 0)
+        box.addView(field, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        AlertDialog.Builder(act, AppTheme.dialogTheme())
+            .setTitle("Note for $who")
+            .setView(box)
+            .setPositiveButton("Save") { _, _ ->
+                put(act, callId, field.text.toString())
+                done()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+}
+
+/** Speed dial: keys 2 to 9 can each hold a favorite number. */
+object SpeedDial {
+    fun number(ctx: Context, digit: Int): String = Prefs.getString(ctx, "speed_${digit}_number", "")
+    fun name(ctx: Context, digit: Int): String = Prefs.getString(ctx, "speed_${digit}_name", "")
+
+    fun set(ctx: Context, digit: Int, name: String, number: String) {
+        Prefs.putString(ctx, "speed_${digit}_number", number)
+        Prefs.putString(ctx, "speed_${digit}_name", name)
+    }
+
+    fun clear(ctx: Context, digit: Int) {
+        Prefs.putString(ctx, "speed_${digit}_number", "")
+        Prefs.putString(ctx, "speed_${digit}_name", "")
     }
 }
 
