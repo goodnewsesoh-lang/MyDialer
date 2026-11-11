@@ -184,8 +184,22 @@ class BackupActivity : Activity() {
         return String(bytes.toByteArray(), Charsets.UTF_8)
     }
 
-    private fun unescape(v: String): String =
-        v.replace("\\n", "\n").replace("\\N", "\n").replace("\\,", ",").replace("\;", ";").replace("\\\\", "\\")
+    private fun unescape(v: String): String {
+        val out = StringBuilder()
+        var i = 0
+        while (i < v.length) {
+            val ch = v[i]
+            if (ch == '\\' && i + 1 < v.length) {
+                val next = v[i + 1]
+                if (next == 'n' || next == 'N') out.append('\n') else out.append(next)
+                i += 2
+            } else {
+                out.append(ch)
+                i++
+            }
+        }
+        return out.toString()
+    }
 
     private fun parse(text: String): List<Card> {
         val cards = ArrayList<Card>()
